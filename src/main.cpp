@@ -1,15 +1,23 @@
 /*
- * main.cpp - M2 FINAL
- * HAL working. Non-blocking loop. Button cycles LED mode.
+ * main.cpp - M3
  *
- * Default  : CCW chase pattern LD3->LD5->LD6->LD4->repeat
- * Button   : each press advances single LED mode
- *            LD3 -> LD4 -> LD5 -> LD6 -> LD3 ...
- * Hold btn : hold 1s to return to chase pattern from any single mode
+ * Boot sequence:
+ *   1. All 4 LEDs blink together x2 (heartbeat)
+ *   2. Default mode: LD3 Orange ON (passthrough)
+ *
+ * Button short press cycles:
+ *   LD3 Orange  -> passthrough
+ *   LD4 Green   -> voice effect 1 (pitch up)
+ *   LD5 Red     -> voice effect 2 (pitch down)
+ *   LD6 Blue    -> voice effect 3 (vibrato)
+ *   (wraps back to Orange)
  */
 
 #include "stm32f4xx_hal.h"
 #include "board.h"
+#include "usbd_core.h"
+#include "usbd_desc.h"
+#include "usbd_audio_mic.h"
 
 /* ------------------------------------------------------------------ */
 /*  SysTick override                                                    */
@@ -29,37 +37,77 @@ extern "C" uint32_t HAL_GetTick(void)
 }
 
 /* ------------------------------------------------------------------ */
-/*  Types                                                               */
+/*  Voice mode                                                          */
 /* ------------------------------------------------------------------ */
 
 typedef enum
 {
-    MODE_PATTERN = 0,
-    MODE_SINGLE  = 1
-} AppMode_t;
+    MODE_PASSTHROUGH = 0,
+    MODE_PITCH_UP    = 1,
+    MODE_PITCH_DOWN  = 2,
+    MODE_VIBRATO     = 3,
+    MODE_COUNT       = 4
+} VoiceMode_t;
+
+static const uint16_t MODE_LED[MODE_COUNT] = {
+    LD3_ORANGE_PIN,
+    LD4_GREEN_PIN,
+    LD5_RED_PIN,
+    LD6_BLUE_PIN,
+};
+
+static VoiceMode_t s_mode = MODE_PASSTHROUGH;
+
+static void set_mode_led(VoiceMode_t mode)
+{
+    HAL_GPIO_WritePin(LED_PORT, LED_ALL_PINS, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(LED_PORT, MODE_LED[mode], GPIO_PIN_SET);
+}
 
 /* ------------------------------------------------------------------ */
-/*  Prototypes                                                          */
+/*  USB handles                                                         */
+/* ------------------------------------------------------------------ */
+
+USBD_HandleTypeDef husbd;
+
+/* ------------------------------------------------------------------ */
+/*  Audio interface callbacks                                           */
+/* ------------------------------------------------------------------ */
+
+static int8_t audio_init(uint32_t sample_rate)
+{
+    (void)sample_rate;
+    return 0;
+}
+
+static int8_t audio_deinit(void)
+{
+    return 0;
+}
+
+static int8_t audio_record(uint8_t *pbuf, uint32_t size)
+{
+    /* M3: silence. M4: real PDM audio + DSP per s_mode */
+    for (uint32_t i = 0U; i < size; i++)
+    {
+        pbuf[i] = 0U;
+    }
+    return 0;
+}
+
+static USBD_AUDIO_MIC_ItfTypeDef s_audio_fops = {
+    audio_init,
+    audio_deinit,
+    audio_record,
+};
+
+/* ------------------------------------------------------------------ */
+/*  Forward declarations                                                */
 /* ------------------------------------------------------------------ */
 
 void SystemClock_Config(void);
 void GPIO_Init(void);
 void Error_Handler(void);
-
-/* ------------------------------------------------------------------ */
-/*  LED helpers                                                         */
-/* ------------------------------------------------------------------ */
-
-static void all_off(void)
-{
-    HAL_GPIO_WritePin(LED_PORT, LED_ALL_PINS, GPIO_PIN_RESET);
-}
-
-static void led_only(uint16_t pin)
-{
-    all_off();
-    HAL_GPIO_WritePin(LED_PORT, pin, GPIO_PIN_SET);
-}
 
 /* ------------------------------------------------------------------ */
 /*  main                                                                */
@@ -76,106 +124,63 @@ int main(void)
 
     GPIO_Init();
 
-    /* CCW order on board: LD3 Orange -> LD5 Red -> LD6 Blue -> LD4 Green */
-    const uint16_t ccw[4] = {
-        LD3_ORANGE_PIN,
-        LD5_RED_PIN,
-        LD6_BLUE_PIN,
-        LD4_GREEN_PIN
-    };
+    /* Heartbeat: all 4 LEDs blink together x2 */
+    for (uint8_t i = 0U; i < 2U; i++)
+    {
+        HAL_GPIO_WritePin(LED_PORT, LED_ALL_PINS, GPIO_PIN_SET);
+        HAL_Delay(200U);
+        HAL_GPIO_WritePin(LED_PORT, LED_ALL_PINS, GPIO_PIN_RESET);
+        HAL_Delay(200U);
+    }
 
-    /* Single mode order */
-    const uint16_t single[4] = {
-        LD3_ORANGE_PIN,
-        LD4_GREEN_PIN,
-        LD5_RED_PIN,
-        LD6_BLUE_PIN
-    };
+    /* Default mode: Orange */
+    s_mode = MODE_PASSTHROUGH;
+    set_mode_led(s_mode);
 
-    AppMode_t mode       = MODE_PATTERN;
-    uint8_t   pat_idx    = 0U;
-    uint8_t   single_idx = 0U;
-    uint32_t  pat_last   = 0U;
+    /* USB init */
+    USBD_Init(&husbd, &MIC_Desc, 0U);
+    USBD_RegisterClass(&husbd, USBD_AUDIO_MIC_CLASS);
+    USBD_AUDIO_MIC_RegisterInterface(&husbd, &s_audio_fops);
+    USBD_Start(&husbd);
 
     /* Button state */
-    uint8_t  btn_prev    = 0U;
-    uint32_t btn_down_at = 0U;
-    uint8_t  btn_fired   = 0U;
-
-    #define PATTERN_MS      300U
-    #define DEBOUNCE_MS      50U
-    #define HOLD_MS        1000U
-
-    /* Show first pattern step immediately */
-    led_only(ccw[0]);
-    pat_last = s_tick;
+    uint8_t  btn_prev  = 0U;
+    uint32_t btn_down  = 0U;
+    uint8_t  btn_fired = 0U;
 
     while (1)
     {
-        uint32_t now = s_tick;
+        uint32_t now     = s_tick;
+        uint8_t  btn_now = (HAL_GPIO_ReadPin(USER_BTN_PORT, USER_BTN_PIN)
+                            == GPIO_PIN_SET) ? 1U : 0U;
 
-        /* ---- Button read ------------------------------------------ */
-        uint8_t btn_now = (HAL_GPIO_ReadPin(USER_BTN_PORT, USER_BTN_PIN)
-                           == GPIO_PIN_SET) ? 1U : 0U;
-
-        /* Rising edge */
+        /* Falling edge: button pressed */
         if (btn_now && !btn_prev)
         {
-            btn_down_at = now;
-            btn_fired   = 0U;
+            btn_down  = now;
+            btn_fired = 0U;
         }
 
-        /* Held past debounce, not yet fired -> short press action */
-        if (btn_now && !btn_fired &&
-            (now - btn_down_at) >= DEBOUNCE_MS)
+        /* Debounced press: fire once after 50ms */
+        if (btn_now && !btn_fired && (now - btn_down) >= 50U)
         {
-            if (mode == MODE_PATTERN)
-            {
-                /* First press: enter single mode at LD3 */
-                mode       = MODE_SINGLE;
-                single_idx = 0U;
-            }
-            else
-            {
-                /* Subsequent presses: advance single LED */
-                single_idx = (single_idx + 1U) % 4U;
-            }
-            led_only(single[single_idx]);
+            s_mode = (VoiceMode_t)((s_mode + 1U) % MODE_COUNT);
+            set_mode_led(s_mode);
             btn_fired = 1U;
         }
 
-        /* Held past 1s -> return to pattern */
-        if (btn_now && btn_fired &&
-            (now - btn_down_at) >= HOLD_MS &&
-            mode == MODE_SINGLE)
-        {
-            mode      = MODE_PATTERN;
-            pat_idx   = 0U;
-            pat_last  = now;
-            btn_fired = 1U;   /* prevent re-trigger */
-        }
-
-        /* Falling edge reset */
+        /* Rising edge: button released */
         if (!btn_now && btn_prev)
         {
             btn_fired = 0U;
         }
 
         btn_prev = btn_now;
-
-        /* ---- Pattern tick ----------------------------------------- */
-        if (mode == MODE_PATTERN &&
-            (now - pat_last) >= PATTERN_MS)
-        {
-            pat_last = now;
-            led_only(ccw[pat_idx]);
-            pat_idx = (pat_idx + 1U) % 4U;
-        }
     }
 }
 
 /* ------------------------------------------------------------------ */
-/*  SystemClock_Config - HSI PLL -> 168MHz                             */
+/*  SystemClock_Config - HSI PLL -> 168 MHz, PLLQ=7 -> 48 MHz USB     */
 /* ------------------------------------------------------------------ */
 
 void SystemClock_Config(void)
@@ -205,7 +210,10 @@ void SystemClock_Config(void)
     clk.APB1CLKDivider = RCC_HCLK_DIV4;
     clk.APB2CLKDivider = RCC_HCLK_DIV2;
 
-    if (HAL_RCC_ClockConfig(&clk, FLASH_LATENCY_5) != HAL_OK) { Error_Handler(); }
+    if (HAL_RCC_ClockConfig(&clk, FLASH_LATENCY_5) != HAL_OK)
+    {
+        Error_Handler();
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -220,16 +228,15 @@ void GPIO_Init(void)
     __HAL_RCC_GPIOD_CLK_ENABLE();
 
     HAL_GPIO_WritePin(LED_PORT, LED_ALL_PINS, GPIO_PIN_RESET);
-
     gpio.Pin   = LED_ALL_PINS;
     gpio.Mode  = GPIO_MODE_OUTPUT_PP;
     gpio.Pull  = GPIO_NOPULL;
     gpio.Speed = GPIO_SPEED_FREQ_LOW;
     HAL_GPIO_Init(LED_PORT, &gpio);
 
-    gpio.Pin   = USER_BTN_PIN;
-    gpio.Mode  = GPIO_MODE_INPUT;
-    gpio.Pull  = GPIO_NOPULL;
+    gpio.Pin  = USER_BTN_PIN;
+    gpio.Mode = GPIO_MODE_INPUT;
+    gpio.Pull = GPIO_NOPULL;
     HAL_GPIO_Init(USER_BTN_PORT, &gpio);
 }
 

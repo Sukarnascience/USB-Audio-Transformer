@@ -1,20 +1,17 @@
-# STM32 Performance Comparison: Blue Pill vs. STM32F407G
+# USB-Audio-Transformer
 
-This project explores the technical trade-offs between the entry-level **Blue Pill (F103)** and the high-performance **STM32F4 Discovery (F407G)**. It serves as a selection guide for choosing the right ARM Cortex-M microcontroller based on processing power, peripherals, and debugging needs.
+The **USB-Audio-Transformer** is a hardware-based, plug-and-play voice changer built on the **STM32F407G-DISC1**. This project transforms the discovery board into a standard USB Microphone that any computer can recognize without extra drivers.
 
-### 🎯 Project Overview
-The goal is to demonstrate the massive jump in capabilities between the two boards:
-*   **The Blue Pill:** A minimalist, budget-friendly board for simple logic and "Arduino-style" DIY projects.
-*   **The F407G-DISC1:** A professional-grade development kit designed for digital signal processing (DSP), audio handling, and complex automation.
+### **Project Goal**
+The goal is to provide a seamless, low-latency audio experience where a user can speak into the onboard mic and, with a single button press, instantly modify their voice (such as pitch-shifting or robotic effects) before the audio is sent to the PC over USB.
 
-### 📊 Key Technical Specs
+### **Key Features**
+*   **Plug-and-Play:** Uses the USB Audio Device Class for universal compatibility.
+*   **Real-Time DSP:** Processes audio instantly using the Cortex-M4 processor.
+*   **One-Touch Control:** Uses the onboard blue button to cycle through voice effects.
+*   **No Latency:** Direct hardware processing ensures no lag during live calls or gaming.
 
-| Feature | Blue Pill (F103C8T6) | STM32F407G-DISC1 |
-| :--- | :--- | :--- |
-| **Core** | Cortex-M3 (72 MHz) | Cortex-M4 + FPU (168 MHz) |
-| **SRAM / Flash** | 20 KB / 64 KB | 192 KB / 1 MB |
-| **On-board Tools** | Basic LEDs & Reset | ST-LINK Debugger, Accel, Mic, Audio DAC |
-| **Ideal For** | Simple GPIO, I2C, SPI | Audio, USB OTG, Math-heavy tasks |
-
-### 🚀 Summary
-Choose the **Blue Pill** for small, low-power, and cost-sensitive applications. Choose the **STM32F407G** when you need hardware-accelerated math (FPU), massive memory, or built-in sensors for rapid prototyping without external modules.
+### **Hardware Requirements**
+*   STM32F407G-DISC1 Discovery Board
+*   Mini-USB cable (for programming)
+*   Micro-USB cable (for the PC Audio connection)

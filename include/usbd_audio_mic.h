@@ -43,7 +43,7 @@ extern "C" {
 /* Class handle */
 typedef struct
 {
-    uint32_t alt_setting;   /* 0 = zero bandwidth, 1 = active streaming */
+    uint32_t alt_setting;
 } USBD_AUDIO_MIC_HandleTypeDef;
 
 /* Interface callback - application fills audio buffer */
@@ -61,6 +61,9 @@ extern USBD_ClassTypeDef USBD_AUDIO_MIC;
 /* Register application callbacks */
 uint8_t USBD_AUDIO_MIC_RegisterInterface(USBD_HandleTypeDef *pdev,
                                           USBD_AUDIO_MIC_ItfTypeDef *fops);
+
+/* Call from main loop every 1ms to push audio packet when stream active */
+void USBD_AUDIO_MIC_PushPacket(USBD_HandleTypeDef *pdev);
 
 #ifdef __cplusplus
 }

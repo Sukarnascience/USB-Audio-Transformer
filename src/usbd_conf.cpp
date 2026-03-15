@@ -153,6 +153,11 @@ void HAL_PCD_DisconnectCallback(PCD_HandleTypeDef *hpcd)
     USBD_LL_DevDisconnected((USBD_HandleTypeDef *)hpcd->pData);
 }
 
+void HAL_PCD_ISOINIncompleteCallback(PCD_HandleTypeDef *hpcd, uint8_t epnum)
+{
+    USBD_LL_IsoINIncomplete((USBD_HandleTypeDef *)hpcd->pData, epnum);
+}
+
 /* ------------------------------------------------------------------ */
 /*  USB device LL interface - called by middleware                     */
 /* ------------------------------------------------------------------ */
@@ -164,7 +169,7 @@ USBD_StatusTypeDef USBD_LL_Init(USBD_HandleTypeDef *pdev)
     hpcd_USB_OTG_FS.Init.speed               = PCD_SPEED_FULL;
     hpcd_USB_OTG_FS.Init.dma_enable          = DISABLE;
     hpcd_USB_OTG_FS.Init.phy_itface          = PCD_PHY_EMBEDDED;
-    hpcd_USB_OTG_FS.Init.Sof_enable          = DISABLE;
+    hpcd_USB_OTG_FS.Init.Sof_enable          = ENABLE;
     hpcd_USB_OTG_FS.Init.low_power_enable    = DISABLE;
     hpcd_USB_OTG_FS.Init.lpm_enable          = DISABLE;
     hpcd_USB_OTG_FS.Init.vbus_sensing_enable = DISABLE;
